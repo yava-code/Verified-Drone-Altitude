@@ -1,188 +1,174 @@
-# Drone Altitude Control - Formal Verification with Z3
+# Verified Drone Altitude Control
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Z3 SMT Solver](https://img.shields.io/badge/verified-Z3%20SMT-green.svg)](https://github.com/Z3Prover/z3)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-A portfolio project demonstrating **formal verification** of a safety-critical
-control system. The drone altitude controller is not just tested - it is
-**mathematically proved** to be safe for every possible input.
+Formal verification of a UAV altitude control law using the Z3 SMT solver.
+The core function `compute_target_alt` is mathematically proved - not tested -
+to respect its safety envelope for every input in the admissible domain.
 
 ---
 
-## What Is Formal Verification?
+## Technical Stack
 
-Traditional unit tests verify behaviour for a *finite set of chosen inputs*.
-No matter how comprehensive the test suite is, it leaves gaps: the combinations
-of real-valued sensor readings a drone might encounter are infinite.
-
-**Formal verification** closes that gap. Instead of sampling the input space,
-we encode the system's logic as a mathematical formula and ask an automated
-theorem prover: *"Does there exist ANY input that violates this property?"*
-
-If the answer is *"no"* (the formula is **unsatisfiable**), the property is
-**proved for all inputs simultaneously** - not just the ones we thought to test.
+| Component | Version | Role |
+|-----------|---------|------|
+| Z3 SMT solver (`z3-solver`) | >= 4.12 | Safety invariant proof engine |
+| Manim Community | >= 0.18 | Counterexample visualization render |
+| Pygame | >= 2.5 | Ground Control Station (GCS) display |
+| Matplotlib | >= 3.7 | Fallback animated flight visualization |
+| Python | 3.10+ | Implementation language |
 
 ---
 
-## Why Z3?
+## Safety Invariants
 
-[Z3](https://github.com/Z3Prover/z3) is an industrial-grade SMT (Satisfiability
-Modulo Theories) solver developed by Microsoft Research. It is used in
-production at Amazon (AWS IAM policy verification), Microsoft (Windows driver
-verification), and NASA (flight controller analysis). Its Python API makes
-it accessible while retaining the full power of the underlying solver.
+The following invariants are formally discharged by Z3 over the complete
+continuous input domain (not sampled - all of it):
 
-Key properties that make Z3 suitable here:
-- Handles **real arithmetic** (not just integers), matching floating-point
-  control laws.
-- Returns **counter-examples**: if a bug exists, Z3 shows the exact sensor
-  values that trigger it - not just a failed assert.
-- Scales to complex state spaces when properties are linear or piecewise-linear.
+```
+Domain:
+  alt_m      in [0.0, 200.0]  m
+  obs_dist_m in [0.0, 200.0]  m
+  v_spd_mps  in [-10.0, 10.0] m/s
+```
+
+| ID | Invariant | Z3 Tactic |
+|----|-----------|-----------|
+| INV-001 | `compute_target_alt(...) >= MIN_ALT_M (2.0 m)` | Negation: assert `output < 2.0` |
+| INV-002 | `compute_target_alt(...) <= MAX_ALT_M (120.0 m)` | Negation: assert `output > 120.0` |
+| INV-003 | Avoidance climbs stay within `[2.0, 120.0] m` | Negation: climb AND envelope violation |
 
 ---
 
-## Safety Properties Verified
+## Verification Results
 
-| ID | Property | Verdict |
-|----|----------|---------|
-| P1 | `output >= MIN_ALT` (2 m) for all valid inputs | **PROVED** |
-| P2 | `output <= MAX_ALT` (120 m) for all valid inputs | **PROVED** |
-| P3 | Climb commands never breach the envelope | **PROVED** |
+Output of `python main.py --mode verify` (Z3 4.16.0, Windows x64):
 
-The input domain is the full physical sensor range:
-- `current_alt`: [0, 200] m
-- `obstacle_dist`: [0, 200] m
-- `vertical_speed`: [-10, 10] m/s
+```
+================================================================
+  Z3 SMT SOLVER - FORMAL VERIFICATION REPORT
+  Module under verification : drone_logic.compute_target_alt
+  SMT solver engine         : Z3 4.16.0
+----------------------------------------------------------------
+  Admissible input domain:
+    alt_m      in [0.0, 200.0] m
+    obs_dist_m in [0.0, 200.0] m
+    v_spd_mps  in [-10.0, 10.0] m/s
+----------------------------------------------------------------
+  [PROVED   ]  INV-001
+               compute_target_alt() >= MIN_ALT_M (2.0 m) for all inputs
+               Solver time : 0.92 ms
 
-Z3 searched this **infinite continuous domain** and found no violations.
+  [PROVED   ]  INV-002
+               compute_target_alt() <= MAX_ALT_M (120.0 m) for all inputs
+               Solver time : 0.43 ms
+
+  [PROVED   ]  INV-003
+               Avoidance climb output bounded within [2.0, 120.0] m
+               Solver time : 0.86 ms
+----------------------------------------------------------------
+  VERDICT : ALL INVARIANTS PROVED - System cleared for simulation
+================================================================
+```
+
+### Counterexample demonstration (unsafe variant, clamp removed)
+
+```
+  [FALSIFIED]  INV-002-UNSAFE
+               [UNSAFE VARIANT] Ceiling invariant on clamp-removed model
+               Solver time : 1.09 ms
+               Counterexample:
+                 alt_m      = 121.111111 m
+                 obs_dist_m = 15.000000  m
+                 v_spd_mps  = 0.555556   m/s
+                 output_m   = 120.555556 m  [violates [2.0, 120.0] m]
+  VERDICT : 1 INVARIANT(S) FALSIFIED - DO NOT DEPLOY
+```
+
+Z3 found a specific input assignment that breaks the ceiling invariant in
+under 2 ms. No fuzzing, no sampling - this is a proof-by-counterexample
+over the entire input domain.
 
 ---
 
-## Project Structure
+## Formal Verification vs. Unit Testing
+
+| Criterion | Unit Tests | Z3 Formal Verification |
+|-----------|-----------|------------------------|
+| Input coverage | Finite, hand-picked samples | Complete continuous domain |
+| Bug discovery | Only tested cases | Any input - no gaps |
+| Guarantee | Evidence | Mathematical proof |
+| Counterexample | None | Exact violating assignment |
+| Standard | Universal | NASA FM, DO-333, AWS IAM |
+
+The key distinction: unit tests provide *inductive evidence*. Z3 provides
+a *deductive proof*. For `compute_target_alt`, the property
+`MIN_ALT_M <= output <= MAX_ALT_M` is now a theorem, not a conjecture.
+
+---
+
+## Architecture
 
 ```
-simulation/
-    drone_control.py    - Control law (the "plant" being verified)
-    verify_safety.py    - Z3 formal verification, counter-example finder
-    simulate.py         - Physics-based flight simulator
-    visualize.py        - Matplotlib real-time animated visualization
-    main.py             - Single entry point
-    requirements.txt    - All dependencies
-    README.md           - This file
+drone_logic.py          - Control law (plant model under verification)
+verify_z3.py            - SMT assertions, counterexample extraction
+result_types.py         - Typed result objects (no exceptions used)
+simulate.py             - Physics trajectory generator (TelemetryFrame log)
+gcs_pygame.py           - Amber-on-black GCS display (Pygame)
+manim_counterexample.py - 3-act counterexample animation (Manim)
+visualize.py            - Matplotlib animation (fallback)
+main.py                 - Pipeline entry point with --mode selector
 ```
 
 ---
 
-## How It Works
-
-```
-Sensor Inputs            Z3 Symbolic Model
-(current_alt,    ---->   (Real variables +   ---->  PROVED / Counter-example
- obstacle_dist,           z3.If expressions)
- vertical_speed)
-
-If PROVED: run simulation --> animated flight visualization
-```
-
-### Control Law (`drone_control.py`)
-
-```python
-def calculate_altitude_adjustment(
-    current_alt: float,
-    obstacle_dist: float,
-    vertical_speed: float,
-) -> float:
-    # Phase 1: obstacle avoidance or gentle descent
-    if obstacle_dist < OBSTACLE_SAFE_DIST:
-        raw_target = current_alt + MAX_STEP_UP * proximity_factor
-    else:
-        raw_target = current_alt - descent
-
-    # Phase 2: HARD safety clamp (formally verified by Z3)
-    return max(MIN_ALT, min(MAX_ALT, raw_target))
-```
-
-### Verification (`verify_safety.py`)
-
-The Python control law is re-expressed using Z3 symbolic variables
-(`z3.Real()`) and `z3.If()` for branches. The solver is then asked
-to **find a counter-example** (negate the property). `unsat` = proved.
-
-```python
-solver.add(output < z3.RealVal(MIN_ALT))   # "find a violation"
-result = solver.check()                    # z3.unsat -> PROVED
-```
-
-### Why This Beats Unit Tests
-
-| Criterion | Unit Tests | Formal Verification (Z3) |
-|-----------|-----------|--------------------------|
-| Input coverage | Finite samples | Complete continuous domain |
-| Bug discovery | Only tested cases | Counter-examples for ALL inputs |
-| Proof strength | Inductive evidence | Mathematical guarantee |
-| Scalability | O(n) with test count | Polynomial in property complexity |
-| Industry use | Universal | NASA, AWS, Microsoft |
-
----
-
-## Installation and Usage
+## Installation
 
 ```bash
-# 1. Install dependencies (Python 3.10+)
-pip install -r requirements.txt
+pip install z3-solver matplotlib numpy pygame
+# For Manim (requires FFmpeg and Cairo):
+pip install manim
+```
 
-# 2. Run verification only
-python verify_safety.py
+See the [Manim installation guide](https://docs.manim.community/en/stable/installation)
+for platform-specific system dependencies (FFmpeg, Cairo, Pango).
 
-# 3. Run full demo (verification + simulation + visualization)
+---
+
+## Usage
+
+```bash
+# Verification report only
+python main.py --mode verify
+
+# Full pipeline: verify -> GCS display (Pygame)
 python main.py
-```
 
-Expected output of `verify_safety.py`:
+# Verify -> Matplotlib animation (no system dependencies)
+python main.py --mode matplotlib
 
-```
-============================================================
-  Z3 FORMAL VERIFICATION REPORT
-============================================================
-  [OK]  P1: Output is always >= MIN_ALT (2.0 m)
-         Status : PROVED
-  [OK]  P2: Output is always <= MAX_ALT (120.0 m)
-         Status : PROVED
-  [OK]  P3: Climb commands never breach the safety envelope
-         Status : PROVED
-
-  VERDICT: ALL PROPERTIES PROVED - System verified SAFE
-============================================================
+# Render Manim counterexample video (requires manim install)
+python main.py --mode manim
+# or directly:
+python -m manim -pqh manim_counterexample.py CounterexampleScene
 ```
 
 ---
 
-## Simulating a Bug (Counter-Example Demo)
+## Coding Standards
 
-To see Z3 in action finding a real bug, temporarily comment out the
-safety clamp in `drone_control.py`:
-
-```python
-# safe_target = max(MIN_ALT, min(MAX_ALT, raw_target))  # BUG: clamp removed
-safe_target = raw_target                                 # UNSAFE
-```
-
-Then re-run `python verify_safety.py`. Z3 will immediately print
-the exact input values that cause the ceiling breach - no fuzzing,
-no hours of testing.
+- No `try/except` blocks. All outcomes are explicit `VerificationStatus` enum values.
+- All physical quantities carry unit suffixes: `_m`, `_mps`, `_s`.
+- `typing.Final` used for all safety constants; `NewType` for `Meters`, `MetersPerSecond`.
+- Docstrings follow Google style with explicit `Precondition`, `Postcondition`,
+  and `Invariants` fields.
+- Z3 symbolic model uses only linear real arithmetic - decidable by the  
+  LA(Q) tactic without requiring nonlinear extensions.
 
 ---
 
 ## References
 
-- Z3 theorem prover: https://github.com/Z3Prover/z3
-- "Satisfiability Modulo Theories" (SMT): https://smtlib.cs.uiowa.edu/
-- NASA Formal Methods: https://shemesh.larc.nasa.gov/fm/
-- AWS Automated Reasoning: https://aws.amazon.com/security/provable-security/
-- FAA Part 107 altitude limits: https://www.faa.gov/uas/commercial_operators/part_107_waivers
-
----
-
-*Built with Python 3.10+ - no simulation engine required, runs with a single `pip install`.*
-# Verified-Drone-Altitude
+- Z3 Theorem Prover - https://github.com/Z3Prover/z3 (Microsoft Research)
+- RTCA DO-178C - Software Considerations in Airborne Systems and Equipment Certification
+- NASA/TM-2019-220054 - Formal Methods in Aerospace
+- FAA 14 CFR Part 107.51 - Small Unmanned Aircraft Operating Limitations
+- SMTLIB2 Standard - https://smtlib.cs.uiowa.edu/

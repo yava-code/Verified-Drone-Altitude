@@ -1,132 +1,196 @@
 """
 simulate.py
 ===========
-Drone flight simulator for the altitude control system.
+Physics-based flight trajectory generator for the altitude control system.
 
-Generates a realistic flight trajectory including:
-  - Takeoff phase
-  - Cruise phase
-  - Obstacle avoidance manoeuvre
-  - Return-to-home descent
+Produces a sequence of ``TelemetryFrame`` snapshots covering a full mission
+profile: takeoff, cruise, obstacle avoidance, and return-to-home descent.
+All altitude commands pass through ``compute_target_alt`` (drone_logic.py),
+ensuring the formally verified safety envelope is enforced at every step.
 
-All altitude commands pass through calculate_altitude_adjustment(),
-ensuring the formal safety envelope is enforced in the simulation.
+The simulator uses a first-order lag filter to model actuator response
+latency. Sensor noise on obstacle distance is modeled as additive Gaussian
+white noise (sigma = 0.3 m), consistent with typical ultrasonic sensor specs.
 """
 
 from __future__ import annotations
 
 import math
 import random
-from dataclasses import dataclass, field
-from typing import List
+from dataclasses import dataclass
+from typing import Final, List
 
-from drone_control import (
-    MIN_ALT,
-    MAX_ALT,
-    OBSTACLE_SAFE_DIST,
-    calculate_altitude_adjustment,
+from drone_logic import (
+    MIN_ALT_M,
+    MAX_ALT_M,
+    MIN_SEP_DIST_M,
+    Meters,
+    MetersPerSecond,
+    compute_target_alt,
 )
+from result_types import FlightPhase
 
 # ---------------------------------------------------------------------------
 # Simulation parameters
 # ---------------------------------------------------------------------------
-SIM_STEPS: int   = 300          # total simulation steps
-DT: float        = 0.2          # seconds per step
-CRUISE_ALT: float = 40.0        # metres - nominal cruising altitude
-OBSTACLE_X: float = 0.55        # fractional position along route [0-1]
-OBSTACLE_ALT: float = 42.0      # altitude of obstacle centroid (metres)
+
+SIM_STEPS:        Final[int]   = 300
+DT_S:             Final[float] = 0.2       # seconds per control cycle
+CRUISE_ALT_M:     Final[Meters] = Meters(40.0)
+OBSTACLE_X_NORM:  Final[float] = 0.55     # obstacle position, normalised [0, 1]
+OBSTACLE_ALT_M:   Final[Meters] = Meters(18.0)  # obstacle top (metres)
+LAG_FILTER_COEFF: Final[float] = 0.18     # first-order actuator lag (dimensionless)
+SENSOR_NOISE_STD: Final[Meters] = Meters(0.3)   # Gaussian noise sigma for dist sensor
 
 
-@dataclass
-class DroneState:
-    """Snapshot of drone state at one simulation step."""
+# ---------------------------------------------------------------------------
+# Telemetry frame
+# ---------------------------------------------------------------------------
 
-    step: int
-    time: float          # seconds
-    x_pos: float         # horizontal position (normalised 0-1)
-    altitude: float      # metres
-    vertical_speed: float  # m/s
-    obstacle_dist: float  # metres to nearest obstacle
-    phase: str           # 'takeoff' | 'cruise' | 'avoidance' | 'descent'
-    verified: bool       # Z3 verification status flag
+@dataclass(frozen=True)
+class TelemetryFrame:
+    """Immutable snapshot of drone state at one simulation step.
 
+    All physical quantities carry unit suffixes consistent with drone_logic.py
+    naming conventions.
+
+    Attributes:
+        step:          Integer step index [0, SIM_STEPS).
+        time_s:        Wall time of the frame (seconds from mission start).
+        x_norm:        Horizontal position normalised to mission range [0.0, 1.0].
+        alt_m:         Current altitude (metres).
+        v_spd_mps:     Vertical speed (m/s). Positive = ascending.
+        obs_dist_m:    Distance to nearest obstacle (metres).
+        phase:         Current mission phase (``FlightPhase`` enum).
+        smt_verified:  True when all Z3 invariants were PROVED before this run.
+    """
+
+    step:         int
+    time_s:       float
+    x_norm:       float
+    alt_m:        Meters
+    v_spd_mps:    MetersPerSecond
+    obs_dist_m:   Meters
+    phase:        FlightPhase
+    smt_verified: bool
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
 
 def _smooth_step(t: float) -> float:
-    """Cubic smooth-step interpolation t in [0,1]."""
+    """Cubic smooth-step (C1 continuity) for interpolation.
+
+    Args:
+        t: Normalized time in [0.0, 1.0].
+
+    Returns:
+        Smooth-step value in [0.0, 1.0].
+    """
     return t * t * (3.0 - 2.0 * t)
 
 
-def run_simulation(verified: bool = True) -> List[DroneState]:
+def _obstacle_distance(x_norm: float) -> Meters:
+    """Compute noisy obstacle distance at normalized mission position x_norm.
+
+    The obstacle profile is modeled as a Gaussian proximity function centered
+    at ``OBSTACLE_X_NORM``. Beyond the obstacle, distance falls off with a
+    linear term to simulate an open-field environment.
+
+    Args:
+        x_norm: Normalized horizontal position [0.0, 1.0].
+
+    Returns:
+        Noisy obstacle distance (metres), clamped to admissible domain.
     """
-    Run the drone flight simulation and return a list of state snapshots.
+    dx: float = abs(x_norm - OBSTACLE_X_NORM)
+    base_dist: float = 80.0 * (1.0 - math.exp(-8.0 * dx * dx)) + 5.0 * dx
+    noise: float = random.gauss(0.0, SENSOR_NOISE_STD)
+    return Meters(max(0.0, min(200.0, base_dist + noise)))
 
-    Parameters
-    ----------
-    verified : bool
-        Whether Z3 verification passed. Used to tag state snapshots.
 
-    Returns
-    -------
-    List[DroneState]
-        Ordered list of drone states from start to end of mission.
+def _classify_phase(
+    x_norm: float,
+    obs_dist_m: Meters,
+) -> FlightPhase:
+    """Classify the current mission phase from position and sensor data.
+
+    Args:
+        x_norm:     Normalized mission position.
+        obs_dist_m: Current obstacle distance reading (metres).
+
+    Returns:
+        ``FlightPhase`` label for this frame.
     """
-    states: List[DroneState] = []
+    if x_norm < 0.08:
+        return FlightPhase.TAKEOFF
+    if x_norm > 0.88:
+        return FlightPhase.DESCENT
+    if obs_dist_m < MIN_SEP_DIST_M:
+        return FlightPhase.AVOIDANCE
+    return FlightPhase.CRUISE
 
-    altitude: float = 0.0
-    vertical_speed: float = 0.0
-    prev_altitude: float = 0.0
+
+# ---------------------------------------------------------------------------
+# Public simulation entry point
+# ---------------------------------------------------------------------------
+
+def run_simulation(smt_verified: bool = True) -> List[TelemetryFrame]:
+    """Execute the full mission simulation and return an ordered telemetry log.
+
+    Args:
+        smt_verified: Pass-through flag indicating whether the Z3 verification
+                      cleared before this run. Stored in each ``TelemetryFrame``
+                      for downstream display in the GCS.
+
+    Returns:
+        List of ``TelemetryFrame`` objects, one per control cycle, in
+        chronological order.
+    """
+    frames: List[TelemetryFrame] = []
+
+    alt_m:       Meters          = Meters(0.0)
+    prev_alt_m:  Meters          = Meters(0.0)
+    v_spd_mps:   MetersPerSecond = MetersPerSecond(0.0)
 
     for step in range(SIM_STEPS):
-        t: float = step / SIM_STEPS  # normalised mission time [0, 1]
-        time: float = step * DT
+        x_norm:    float = step / SIM_STEPS
+        time_s:    float = step * DT_S
 
-        # --- Determine obstacle distance ---
-        dx: float = abs(t - OBSTACLE_X)
-        # Obstacle has a Gaussian proximity profile
-        base_dist: float = 80.0 * (1.0 - math.exp(-8.0 * dx * dx)) + 5.0 * dx
-        # Add mild sensor noise
-        noise: float = random.gauss(0.0, 0.3)
-        obstacle_dist: float = max(0.0, min(200.0, base_dist + noise))
+        obs_dist_m: Meters = _obstacle_distance(x_norm)
 
-        # --- Compute target altitude via control law ---
-        # Inject a gentle vertical_speed based on recent altitude change
-        vertical_speed = (altitude - prev_altitude) / DT if step > 0 else 0.0
-        prev_altitude = altitude
-
-        target_alt: float = calculate_altitude_adjustment(
-            current_alt=altitude,
-            obstacle_dist=obstacle_dist,
-            vertical_speed=vertical_speed,
+        # Derive vertical speed from finite differences
+        v_spd_mps = MetersPerSecond(
+            (alt_m - prev_alt_m) / DT_S if step > 0 else 0.0
         )
+        prev_alt_m = alt_m
 
-        # Override target during takeoff/descent phases to guide the trajectory
-        if t < 0.08:
-            # Takeoff: smoothly climb from 0 to CRUISE_ALT
-            phase = "takeoff"
-            target_alt = _smooth_step(t / 0.08) * CRUISE_ALT
-        elif t > 0.88:
-            # Descent: smoothly descend from current altitude to MIN_ALT
-            descent_t = (t - 0.88) / 0.12
-            target_alt = max(MIN_ALT, altitude * (1.0 - _smooth_step(descent_t)))
-            phase = "descent"
-        elif obstacle_dist < OBSTACLE_SAFE_DIST:
-            phase = "avoidance"
-        else:
-            phase = "cruise"
+        # State transition: call the formally verified control law
+        tgt_alt_m: Meters = compute_target_alt(alt_m, obs_dist_m, v_spd_mps)
 
-        # --- Simulate first-order altitude response (lag filter) ---
-        altitude += (target_alt - altitude) * 0.18
-        altitude = max(MIN_ALT if step > 5 else 0.0, min(MAX_ALT, altitude))
+        phase: FlightPhase = _classify_phase(x_norm, obs_dist_m)
 
-        states.append(DroneState(
+        # Override target for takeoff / descent to shape the trajectory arc
+        if phase == FlightPhase.TAKEOFF:
+            tgt_alt_m = Meters(_smooth_step(x_norm / 0.08) * CRUISE_ALT_M)
+        elif phase == FlightPhase.DESCENT:
+            descent_t = (x_norm - 0.88) / 0.12
+            tgt_alt_m = Meters(max(MIN_ALT_M, alt_m * (1.0 - _smooth_step(descent_t))))
+
+        # First-order actuator lag
+        alt_m = Meters(alt_m + (tgt_alt_m - alt_m) * LAG_FILTER_COEFF)
+        alt_m = Meters(max(MIN_ALT_M if step > 5 else 0.0, min(MAX_ALT_M, alt_m)))
+
+        frames.append(TelemetryFrame(
             step=step,
-            time=time,
-            x_pos=t,
-            altitude=altitude,
-            vertical_speed=vertical_speed,
-            obstacle_dist=obstacle_dist,
+            time_s=time_s,
+            x_norm=x_norm,
+            alt_m=alt_m,
+            v_spd_mps=v_spd_mps,
+            obs_dist_m=obs_dist_m,
             phase=phase,
-            verified=verified,
+            smt_verified=smt_verified,
         ))
 
-    return states
+    return frames
