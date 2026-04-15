@@ -1,5 +1,9 @@
 # Verified Drone Altitude Control
 
+
+https://github.com/user-attachments/assets/386bf0d7-75e1-4259-a9d8-3c243f8d652c
+
+
 Formal verification of a UAV altitude control law using the Z3 SMT solver.
 The core function `compute_target_alt` is mathematically proved - not tested -
 to respect its safety envelope for every input in the admissible domain.
