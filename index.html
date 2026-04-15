@@ -482,11 +482,11 @@
     <div class="rule-list">
       <div class="rule-item">
         <div class="rule-item__label">No try/except</div>
-        <div class="rule-item__text">All outcomes are explicit <em>VerificationStatus</em> enum values. Callers must branch on status before accessing payload fields. This mirrors the Result&lt;T,&thinsp;E&gt; idiom in Rust and Ada&rsquo;s checked exceptions.</div>
+        <div class="rule-item__text">All outcomes are explicit <em>VerificationStatus</em> enum values. Callers must branch on status before accessing payload fields. This mirrors the Result&lt;T,&thinsp;E&gt; idiom in Rust and Ada&rsquo;s explicit return status pattern.</div>
       </div>
       <div class="rule-item">
         <div class="rule-item__label">Unit Suffixes</div>
-        <div class="rule-item__text">All physical quantities carry unit suffixes: <em>_m</em> (metres), <em>_mps</em> (metres per second), <em>_s</em> (seconds). No naked floats.</div>
+        <div class="rule-item__text">All physical quantities carry unit suffixes: <em>_m</em> (meters), <em>_mps</em> (meters per second), <em>_s</em> (seconds). No naked floats.</div>
       </div>
       <div class="rule-item">
         <div class="rule-item__label">typing.Final</div>
