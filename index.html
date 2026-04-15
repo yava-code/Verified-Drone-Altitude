@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verified Drone Altitude Control — A Formal Methods Approach</title>
+<style>
+  /* ── RESET ────────────────────────────────────────────────────── */
+  *, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  /* ── ROOT / PALETTE ──────────────────────────────────────────── */
+  :root {
+    --bg:      #050505;
+    --fg:      #E0E0E0;
+    --amber:   #C2942E;
+    --dim:     #555;
+    --rule:    #222;
+    --mono:    'JetBrains Mono', 'Courier New', 'Courier', monospace;
+    --serif:   'Times New Roman', 'Garamond', 'Georgia', serif;
+  }
+
+  html {
+    font-size: 16px;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--serif);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background: var(--amber);
+    color: var(--bg);
+  }
+
+  /* ── LAYOUT SPINE ────────────────────────────────────────────── */
+  .page {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 6rem 2rem 10rem;
+  }
+
+  /* ── HEADER ──────────────────────────────────────────────────── */
+  .header {
+    margin-bottom: 8rem;
+  }
+
+  .header__label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 1.5rem;
+  }
+
+  .header__title {
+    font-family: var(--serif);
+    font-size: 2.4rem;
+    font-weight: 400;
+    line-height: 1.2;
+    color: var(--fg);
+    max-width: 680px;
+  }
+
+  .header__subtitle {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--amber);
+    margin-top: 1rem;
+    letter-spacing: 0.08em;
+  }
+
+  .header__rule {
+    width: 48px;
+    height: 1px;
+    background: var(--amber);
+    margin-top: 2rem;
+  }
+
+  /* ── SECTION ─────────────────────────────────────────────────── */
+  .section {
+    margin-bottom: 8rem;
+  }
+
+  .section__number {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 0.6rem;
+  }
+
+  .section__title {
+    font-family: var(--serif);
+    font-size: 1.6rem;
+    font-weight: 400;
+    color: var(--fg);
+    margin-bottom: 2.5rem;
+  }
+
+  .section__body {
+    font-family: var(--serif);
+    font-size: 1.05rem;
+    color: var(--fg);
+    max-width: 640px;
+    line-height: 1.85;
+  }
+
+  .section__body p {
+    margin-bottom: 1.4rem;
+  }
+
+  .section__body em {
+    color: var(--amber);
+    font-style: normal;
+  }
+
+  /* ── ASYMMETRIC GRID ─────────────────────────────────────────── */
+  .grid {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 0 3rem;
+    align-items: start;
+  }
+
+  .grid__label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    color: var(--dim);
+    text-transform: uppercase;
+    padding-top: 0.3rem;
+  }
+
+  .grid__content {
+    font-family: var(--serif);
+    font-size: 1.05rem;
+    line-height: 1.85;
+    color: var(--fg);
+  }
+
+  .grid__content p {
+    margin-bottom: 1.4rem;
+  }
+
+  /* ── CODE BLOCKS ─────────────────────────────────────────────── */
+  .codeblock {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.75;
+    color: var(--fg);
+    background: transparent;
+    border: 1px solid var(--rule);
+    padding: 2rem 2.5rem;
+    overflow-x: auto;
+    white-space: pre;
+    margin-top: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .codeblock .kw {
+    color: var(--amber);
+  }
+
+  .codeblock .cm {
+    color: var(--dim);
+  }
+
+  /* ── INVARIANT CARDS ─────────────────────────────────────────── */
+  .inv-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2.5rem;
+    margin-top: 2rem;
+  }
+
+  .inv-card {
+    border-left: 1px solid var(--amber);
+    padding-left: 2rem;
+  }
+
+  .inv-card__id {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.2em;
+    color: var(--amber);
+    margin-bottom: 0.4rem;
+  }
+
+  .inv-card__rule {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--fg);
+    margin-bottom: 0.3rem;
+  }
+
+  .inv-card__tactic {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--dim);
+  }
+
+  /* ── ARCHITECTURE RULES ──────────────────────────────────────── */
+  .rule-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    margin-top: 2rem;
+  }
+
+  .rule-item {
+    border-left: 1px solid var(--rule);
+    padding-left: 2rem;
+  }
+
+  .rule-item__label {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    color: var(--amber);
+    text-transform: uppercase;
+    margin-bottom: 0.4rem;
+  }
+
+  .rule-item__text {
+    font-family: var(--serif);
+    font-size: 1rem;
+    color: var(--fg);
+    line-height: 1.7;
+    max-width: 600px;
+  }
+
+  /* ── TABLE ───────────────────────────────────────────────────── */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    margin-top: 2rem;
+  }
+
+  .data-table th {
+    text-align: left;
+    font-weight: 400;
+    color: var(--amber);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    padding: 0.8rem 1.2rem;
+    border-bottom: 1px solid var(--amber);
+  }
+
+  .data-table td {
+    padding: 0.75rem 1.2rem;
+    border-bottom: 1px solid var(--rule);
+    color: var(--fg);
+    vertical-align: top;
+    line-height: 1.6;
+  }
+
+  .data-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .data-table .col-label {
+    color: var(--dim);
+    white-space: nowrap;
+  }
+
+  /* ── MEDIA ───────────────────────────────────────────────────── */
+  .media-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 4rem;
+    margin-top: 2rem;
+  }
+
+  .media-item {
+    border: 1px solid var(--rule);
+    padding: 0;
+    background: transparent;
+  }
+
+  .media-item img,
+  .media-item video {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .media-item__caption {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 0.8rem 1.2rem;
+    border-top: 1px solid var(--rule);
+  }
+
+  /* ── COLOPHON ────────────────────────────────────────────────── */
+  .colophon {
+    margin-top: 10rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--dim);
+    letter-spacing: 0.1em;
+    line-height: 2;
+  }
+
+  .colophon a {
+    color: var(--dim);
+    text-decoration: none;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .colophon a:hover {
+    color: var(--amber);
+    border-color: var(--amber);
+  }
+
+  /* ── RESPONSIVE ──────────────────────────────────────────────── */
+  @media (max-width: 680px) {
+    .page {
+      padding: 3rem 1.2rem 6rem;
+    }
+
+    .header__title {
+      font-size: 1.6rem;
+    }
+
+    .section__title {
+      font-size: 1.3rem;
+    }
+
+    .grid {
+      grid-template-columns: 1fr;
+      gap: 0.6rem 0;
+    }
+
+    .data-table {
+      font-size: 0.65rem;
+    }
+
+    .data-table th,
+    .data-table td {
+      padding: 0.5rem 0.6rem;
+    }
+
+    .section {
+      margin-bottom: 5rem;
+    }
+
+    .header {
+      margin-bottom: 5rem;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- HEADER                                                     -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+
+  <header class="header">
+    <div class="header__label">Formal Verification &mdash; Z3 SMT Solver</div>
+    <h1 class="header__title">Verified Drone Altitude Control: A Formal Methods Approach</h1>
+    <div class="header__subtitle">[SMT-VERIFIED] &nbsp; ALL INVARIANTS PROVED &mdash; SYSTEM CLEARED</div>
+    <div class="header__rule"></div>
+  </header>
+
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- 01 // ABSTRACT                                             -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+
+  <section class="section" id="abstract">
+    <div class="section__number">01 // Abstract</div>
+    <h2 class="section__title">The Core &ldquo;Why&rdquo;</h2>
+
+    <div class="grid">
+      <div class="grid__label">Genesis</div>
+      <div class="grid__content">
+        <p>I realized that unit testing isn&rsquo;t enough for drones where a single software bug equals a total loss. I wanted to treat the control law not as code, but as a <em>mathematical theorem</em>.</p>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="grid__label">Learning Curve</div>
+      <div class="grid__content">
+        <p>I spent weeks diving into the <em>RTCA DO-178C</em> standard and learning the SMT-LIB language to understand how Z3 (Microsoft Research) actually &ldquo;thinks&rdquo; about real numbers.</p>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="grid__label">Struggle</div>
+      <div class="grid__content">
+        <p>My biggest challenge was bridging the gap between abstract math and real-time physics. I had to build a custom GCS (Ground Control Station) in Pygame just to see the &ldquo;verified&rdquo; flag in action.</p>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="grid__label">Breakthrough</div>
+      <div class="grid__content">
+        <p>Using Manim to visualize the counter-examples Z3 found was the &ldquo;aha!&rdquo; moment. It showed me exactly where the logic was weak before a single line of flight code was run.</p>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- 02 // THE INVARIANTS                                       -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+
+  <section class="section" id="invariants">
+    <div class="section__number">02 // The Invariants</div>
+    <h2 class="section__title">Safety Constraints &mdash; Formally Discharged</h2>
+
+    <div class="codeblock"><span class="cm">; Admissible input domain (SMT-LIB 2.0)</span>
+<span class="kw">(declare-const</span> alt_m      Real<span class="kw">)</span>
+<span class="kw">(declare-const</span> obs_dist_m Real<span class="kw">)</span>
+<span class="kw">(declare-const</span> v_spd_mps  Real<span class="kw">)</span>
+
+<span class="kw">(assert</span> (<span class="kw">and</span> (&gt;= alt_m      0.0)   (&lt;= alt_m      200.0)<span class="kw">))</span>
+<span class="kw">(assert</span> (<span class="kw">and</span> (&gt;= obs_dist_m 0.0)   (&lt;= obs_dist_m 200.0)<span class="kw">))</span>
+<span class="kw">(assert</span> (<span class="kw">and</span> (&gt;= v_spd_mps -10.0)  (&lt;= v_spd_mps  10.0)<span class="kw">))</span></div>
+
+    <div class="inv-list">
+      <div class="inv-card">
+        <div class="inv-card__id">INV-001</div>
+        <div class="inv-card__rule">compute_target_alt(&hellip;) &ge; MIN_ALT_M&ensp;(2.0&thinsp;m)</div>
+        <div class="inv-card__tactic">Z3 tactic: assert output &lt; 2.0 &rarr; unsat &rarr; PROVED</div>
+      </div>
+      <div class="inv-card">
+        <div class="inv-card__id">INV-002</div>
+        <div class="inv-card__rule">compute_target_alt(&hellip;) &le; MAX_ALT_M&ensp;(120.0&thinsp;m)</div>
+        <div class="inv-card__tactic">Z3 tactic: assert output &gt; 120.0 &rarr; unsat &rarr; PROVED</div>
+      </div>
+      <div class="inv-card">
+        <div class="inv-card__id">INV-003</div>
+        <div class="inv-card__rule">Avoidance climbs bounded within [2.0, 120.0]&thinsp;m</div>
+        <div class="inv-card__tactic">Z3 tactic: assert climb AND envelope violation &rarr; unsat &rarr; PROVED</div>
+      </div>
+    </div>
+
+    <div class="codeblock"><span class="cm"># Verification output &mdash; Z3 4.16.0</span>
+
+  [<span class="kw">PROVED</span>]  INV-001   compute_target_alt() &gt;= 2.0 m     0.92 ms
+  [<span class="kw">PROVED</span>]  INV-002   compute_target_alt() &lt;= 120.0 m   0.43 ms
+  [<span class="kw">PROVED</span>]  INV-003   Avoidance climb bounded            0.86 ms
+
+  VERDICT : ALL INVARIANTS PROVED</div>
+  </section>
+
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- 03 // HARDENED ARCHITECTURE                                -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+
+  <section class="section" id="architecture">
+    <div class="section__number">03 // Hardened Architecture</div>
+    <h2 class="section__title">The &ldquo;No Exceptions&rdquo; Rule</h2>
+
+    <div class="section__body">
+      <p>In safety-critical systems, exceptions are an unstructured control flow mechanism that cannot be statically reasoned about. Every function in this project returns an explicit, typed result object whose state transitions are fully enumerable at compile time.</p>
+    </div>
+
+    <div class="rule-list">
+      <div class="rule-item">
+        <div class="rule-item__label">No try/except</div>
+        <div class="rule-item__text">All outcomes are explicit <em>VerificationStatus</em> enum values. Callers must branch on status before accessing payload fields. This mirrors the Result&lt;T,&thinsp;E&gt; idiom in Rust and Ada&rsquo;s explicit return status pattern.</div>
+      </div>
+      <div class="rule-item">
+        <div class="rule-item__label">Unit Suffixes</div>
+        <div class="rule-item__text">All physical quantities carry unit suffixes: <em>_m</em> (meters), <em>_mps</em> (meters per second), <em>_s</em> (seconds). No naked floats.</div>
+      </div>
+      <div class="rule-item">
+        <div class="rule-item__label">typing.Final</div>
+        <div class="rule-item__text">All safety constants are declared with <em>typing.Final</em>. Domain types use <em>NewType</em> for Meters and MetersPerSecond to prevent dimensional errors.</div>
+      </div>
+      <div class="rule-item">
+        <div class="rule-item__label">Linear Arithmetic</div>
+        <div class="rule-item__text">The Z3 symbolic model uses only linear real arithmetic &mdash; decidable by the LA(Q) tactic without requiring nonlinear extensions. This guarantees solver termination.</div>
+      </div>
+    </div>
+
+    <div class="codeblock"><span class="cm"># Architecture map</span>
+
+drone_logic.py          <span class="cm">Control law (plant model under verification)</span>
+verify_z3.py            <span class="cm">SMT assertions, counterexample extraction</span>
+result_types.py         <span class="cm">Typed result objects (no exceptions used)</span>
+simulate.py             <span class="cm">Physics trajectory generator</span>
+gcs_pygame.py           <span class="cm">Amber-on-black GCS display (Pygame)</span>
+manim_counterexample.py <span class="cm">3-act counterexample animation (Manim)</span>
+visualize.py            <span class="cm">Matplotlib animation (fallback)</span>
+main.py                 <span class="cm">Pipeline entry point with --mode selector</span></div>
+  </section>
+
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- 04 // VERIFICATION VS SIMULATION                          -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+
+  <section class="section" id="verification">
+    <div class="section__number">04 // Verification vs Simulation</div>
+    <h2 class="section__title">Proof, Not Evidence</h2>
+
+    <div class="section__body">
+      <p>Unit tests provide <em>inductive evidence</em>. Z3 provides a <em>deductive proof</em>. For compute_target_alt, the property MIN_ALT_M&thinsp;&le;&thinsp;output&thinsp;&le;&thinsp;MAX_ALT_M is now a theorem, not a conjecture.</p>
+    </div>
+
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Criterion</th>
+          <th>Unit Tests</th>
+          <th>Z3 Formal Verification</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="col-label">Input coverage</td>
+          <td>Finite, hand-picked samples</td>
+          <td>Complete continuous domain</td>
+        </tr>
+        <tr>
+          <td class="col-label">Bug discovery</td>
+          <td>Only tested cases</td>
+          <td>Any input &mdash; no gaps</td>
+        </tr>
+        <tr>
+          <td class="col-label">Guarantee</td>
+          <td>Evidence</td>
+          <td>Mathematical proof</td>
+        </tr>
+        <tr>
+          <td class="col-label">Counterexample</td>
+          <td>None</td>
+          <td>Exact violating assignment</td>
+        </tr>
+        <tr>
+          <td class="col-label">Standard</td>
+          <td>Universal</td>
+          <td>NASA FM, DO-333, AWS IAM</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="codeblock"><span class="cm"># Counterexample demonstration (unsafe variant, clamp removed)</span>
+
+  [<span class="kw">FALSIFIED</span>]  INV-002-UNSAFE
+               Counterexample:
+                 alt_m      = 121.111111 m
+                 obs_dist_m =  15.000000 m
+                 v_spd_mps  =   0.555556 m/s
+                 output_m   = 120.555556 m  <span class="cm">[violates [2.0, 120.0] m]</span>
+
+  VERDICT : 1 INVARIANT(S) FALSIFIED &mdash; DO NOT DEPLOY</div>
+  </section>
+
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- 05 // MEDIA                                                -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+
+  <section class="section" id="media">
+    <div class="section__number">05 // Media</div>
+    <h2 class="section__title">Showcase</h2>
+
+    <div class="media-grid">
+
+      <div class="media-item">
+        <img
+          src="https://github.com/user-attachments/assets/8284495d-1826-45d9-93cf-9de1f3f30185"
+          alt="Ground Control Station — Amber-on-black GCS display showing telemetry, altitude bar, and mission profile"
+          loading="lazy"
+        >
+        <div class="media-item__caption">Ground Control Station &mdash; Pygame GCS Display &nbsp; [SMT-VERIFIED]</div>
+      </div>
+
+      <div class="media-item">
+        <img
+          src="https://github.com/user-attachments/assets/aca1aebd-f186-4146-912d-85d13fb6e7c0"
+          alt="Simulation GIF — Drone altitude control simulation in action"
+          loading="lazy"
+        >
+        <div class="media-item__caption">Simulation &mdash; Altitude Control Loop</div>
+      </div>
+
+      <div class="media-item">
+        <video
+          controls
+          preload="metadata"
+          playsinline
+        >
+          <source src="https://github.com/user-attachments/assets/386bf0d7-75e1-4259-a9d8-3c243f8d652c" type="video/mp4">
+        </video>
+        <div class="media-item__caption">Manim Counterexample Animation &mdash; 3-Act Visualization</div>
+      </div>
+
+    </div>
+  </section>
+
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- COLOPHON                                                   -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+
+  <footer class="colophon">
+    Z3 Theorem Prover &mdash; <a href="https://github.com/Z3Prover/z3">Microsoft Research</a><br>
+    RTCA DO-178C &mdash; Software Considerations in Airborne Systems<br>
+    NASA/TM-2019-220054 &mdash; Formal Methods in Aerospace<br>
+    FAA 14 CFR Part 107.51 &mdash; sUAS Operating Limitations<br>
+    SMT-LIB 2.0 Standard &mdash; <a href="https://smtlib.cs.uiowa.edu/">smtlib.cs.uiowa.edu</a>
+  </footer>
+
+</div>
+
+</body>
+</html>
